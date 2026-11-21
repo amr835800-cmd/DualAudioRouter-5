@@ -1,0 +1,16 @@
+package com.example.dualaudiorouter
+
+import android.graphics.drawable.Drawable
+
+data class AppInfoItem(
+    val packageName: String,
+    val appName: String,
+    val icon: Drawable?
+)
+
+data class AudioDeviceItem(
+    val id: String,
+    val name: String,
+    val address: String? = null,
+    val isBluetooth: Boolean = false
+)

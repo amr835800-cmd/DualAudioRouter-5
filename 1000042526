@@ -1,0 +1,206 @@
+package com.example.dualaudiorouter
+
+import android.Manifest
+import android.os.Build
+import android.os.Bundle
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.core.graphics.drawable.toBitmap
+
+class MainActivity : ComponentActivity() {
+
+    private lateinit var routerManager: AudioRouterManager
+    private var refreshTick by mutableIntStateOf(0)
+
+    private val bluetoothPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        refreshTick++
+    }
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        routerManager = AudioRouterManager(this)
+
+        requestNeededPermissions()
+
+        setContent {
+            MaterialTheme {
+                val tick = refreshTick
+                val apps = remember(tick) { routerManager.getLaunchableApps() }
+                val targets = remember(tick) { routerManager.getAvailableAudioTargets() }
+                var searchQuery by remember { mutableStateOf("") }
+
+                val filteredApps = remember(apps, searchQuery) {
+                    if (searchQuery.isBlank()) apps
+                    else apps.filter { it.appName.contains(searchQuery, ignoreCase = true) }
+                }
+
+                Scaffold(
+                    topBar = {
+                        TopAppBar(
+                            title = { Text("توجيه صوت التطبيقات") },
+                            actions = {
+                                TextButton(onClick = { refreshTick++ }) {
+                                    Text("تحديث")
+                                }
+                            }
+                        )
+                    }
+                ) { padding ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(padding)
+                            .padding(12.dp)
+                    ) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer
+                            )
+                        ) {
+                            Text(
+                                text = "السماعات المتاحة: ${targets.size - 1} بلوتوث + سماعة الهاتف",
+                                modifier = Modifier.padding(12.dp),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholder = { Text("ابحث عن تطبيق...") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            items(filteredApps, key = { it.packageName }) { app ->
+                                AppRoutingRow(
+                                    app = app,
+                                    targets = targets,
+                                    initialTargetId = routerManager.getRule(app.packageName),
+                                    onTargetSelected = { selected ->
+                                        routerManager.saveRule(app.packageName, selected.id)
+                                        routerManager.applyRoutingForTarget(selected.id)
+                                        Toast.makeText(
+                                            this@MainActivity,
+                                            "تم ربط ${app.appName} بـ ${selected.name}",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun requestNeededPermissions() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            bluetoothPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.BLUETOOTH_CONNECT,
+                    Manifest.permission.BLUETOOTH_SCAN
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun AppRoutingRow(
+    app: AppInfoItem,
+    targets: List<AudioDeviceItem>,
+    initialTargetId: String,
+    onTargetSelected: (AudioDeviceItem) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var selectedId by remember(app.packageName, initialTargetId) {
+        mutableStateOf(initialTargetId)
+    }
+
+    val currentTarget = targets.find { it.id == selectedId } ?: targets.first()
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            app.icon?.let { drawable ->
+                val bitmap = remember(app.packageName) {
+                    drawable.toBitmap(96, 96).asImageBitmap()
+                }
+                Image(
+                    bitmap = bitmap,
+                    contentDescription = app.appName,
+                    modifier = Modifier.size(42.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+            }
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = app.appName,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "المخرج: ${currentTarget.name}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            Box {
+                OutlinedButton(onClick = { expanded = true }) {
+                    Text("اختيار سماعة")
+                }
+
+                DropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false }
+                ) {
+                    targets.forEach { target ->
+                        DropdownMenuItem(
+                            text = { Text(target.name) },
+                            onClick = {
+                                selectedId = target.id
+                                expanded = false
+                                onTargetSelected(target)
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
